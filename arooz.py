@@ -709,7 +709,7 @@ _RUBAI = [
  "مفعولن مفعول مفاعیلن فع",
 ]
 # وزن‌هایی که خانوادهٔ الگویی دارند (نامِ وزن → فهرستِ ارکانِ مجاز)
-FAMILY = {"رباعی": _RUBAI}
+FAMILY = {"وزن رباعی": _RUBAI}
 _FAM_PAT = {name: {_build_pattern(a): (0.0 if i==0 else 0.55)
                    for i,a in enumerate(arks)}
             for name,arks in FAMILY.items()}
