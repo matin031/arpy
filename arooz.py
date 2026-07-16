@@ -841,16 +841,6 @@ def _marks(w):
         else:              out.append('ᵕ');  i+=1       # کوتاه
     return ' '.join(out)
 
-def _best_scan(scans, pat, name=None):
-    if not scans: return None
-    best=None; bc=1e9
-    for v,vp in meter_variants(pat,name).items():
-        for x,sp in scans.items():
-            if len(x)!=len(v): continue
-            c=match_cost(x,v)+LAMBDA*sp+vp
-            if c<bc: bc=c; best=x
-    return best or min(scans, key=lambda x:abs(len(x)-len(pat)))
-
 def scan_report(mesra1, mesra2=None):
     rows,conf,s1,s2=detect(mesra1,mesra2)
     b=rows[0]
