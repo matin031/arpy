@@ -691,6 +691,14 @@ MU=0.35       # وزنِ پیشینِ بسامدی (وزنِ رایج‌تر م�
               # ★ تنظیم‌شده با جاروبِ تجربی روی ۳۵ بیتِ محک: ۰.۹۰ منجر به سوگیریِ
               #   افراطی به‌سمتِ چند وزنِ فوق‌رایج (رمل مسدس محذوف، رباعی) می‌شد و
               #   ۲۷/۳۵ درست می‌داد؛ ۰.۳۵ در این محک بهترین بود (۳۰/۳۵).
+RARE_TAIL_PENALTY=1.4   # جریمهٔ دمِ فوق‌نادرِ جدول (بسامد<۰.۰۱٪).
+              # MU=0.35 پیشینِ بسامدی را عمداً می‌فشُرد تا تناسبِ هجایی حاکم باشد؛
+              # عارضه‌اش این بود که ردیف‌های ترکیبیاتیِ ۰.۰۰۵٪ (که پیشینِ واقعی‌شان
+              # ~۵۰۰ برابر کمتر از بحرهای اصلی است) با برتریِ جزئیِ تناسب برنده می‌شدند.
+              # این جمله همان سهمِ فشرده‌شدهٔ پیشین را فقط برای آن دم برمی‌گرداند:
+              # (1-MU)×log10(2.77/0.005)≈1.1. پنجرهٔ امنِ اندازه‌گیری‌شده روی ۳۷ بیتِ
+              # محک: (۱.۱۴، ۱.۷۵) — ۱.۴ وسطِ پنجره با حاشیهٔ دوطرفه.
+RARE_TAIL_FREQ=0.01     # آستانهٔ «فوق‌نادر»
 
 
 
@@ -813,8 +821,9 @@ def detect(mesra1, mesra2=None):
         c1=meter_cost(i1,p,n)
         c2=meter_cost(i2,p,n) if s2 is not None else c1
         prior = -MU*math.log10(f+0.05)          # بسامدِ بالا → امتیازِ کمتر (بهتر)
+        rare = RARE_TAIL_PENALTY if f < RARE_TAIL_FREQ else 0.0
         rows.append(dict(name=n,ark=a,pat=p,freq=f,c1=c1,c2=c2,
-                         summ=c1+c2, score=c1+c2+prior))
+                         summ=c1+c2, score=c1+c2+prior+rare))
     rows.sort(key=lambda r:(round(r["score"],3), -r["freq"]))
     if len(LEXICON) >= LEX_MIN:               # مرحلهٔ ۲: بازرتبه‌بندی (فقط با واژه‌نامهٔ بزرگ)
         for r in rows[:LEX_TOPK]:
@@ -902,8 +911,9 @@ def detect_poem(mesras):
         cs = [min(c, 6.0) for c in cs]          # سقف: یک مصراعِ بد کلّ را نابود نکند
         avg = sum(cs) / n
         prior = -MU * math.log10(f + 0.05)
+        rare = RARE_TAIL_PENALTY if f < RARE_TAIL_FREQ else 0.0
         rows.append(dict(name=nm, ark=a, pat=p, freq=f,
-                         costs=cs, summ=avg, score=avg + prior))
+                         costs=cs, summ=avg, score=avg + prior + rare))
     rows.sort(key=lambda r: (round(r["score"], 3), -r["freq"]))
     if len(LEXICON) >= LEX_MIN:
         for r in rows[:LEX_TOPK]:
