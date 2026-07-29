@@ -103,6 +103,8 @@ def tokenize_line(line):
 
 # ==================================== ۳) گسترشِ ابهام (W/Y/A/E) → قطعی
 PEN_MAX=7   # هرسِ بی‌خطر: جریمهٔ بیش از این هرگز برنده نمی‌شود (λ×7≈۲.۴)
+BEAM=40000  # پهنای پرتو: بیشینهٔ خوانشِ نگه‌داشته‌شده (به ترتیبِ باورپذیری).
+            # هزینهٔ کلِ موتور تقریباً خطی با این عدد است.
 _EXP_CACHE={}
 def expand_ambiguous(toks, full=False):
     """هر خوانشِ ممکن + «جریمهٔ باورپذیری»: خوانشی که انتخاب‌های نادرتری کرده
@@ -139,7 +141,7 @@ def expand_ambiguous(toks, full=False):
         if len(res)>4000:
             res=sorted(res,key=lambda z:z[1])
             mn=res[0][1]
-            res=[x for x in res if x[1]<=mn+PEN_MAX][:40000]
+            res=[x for x in res if x[1]<=mn+PEN_MAX][:BEAM]
     res.sort(key=lambda z:z[1])
     mn=res[0][1] if res else 0
     res=[x for x in res if x[1]<=mn+PEN_MAX]
