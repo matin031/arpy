@@ -18,12 +18,14 @@ import p3r
 _NO_LEX = False
 
 
-def _init(no_lex):
-    global _NO_LEX
-    _NO_LEX = no_lex
+def _init(no_lex, lex_path=None, beam=None):
     import arooz
+    if beam:
+        arooz.BEAM = beam
     if no_lex:
         arooz.LEXICON = {}
+    elif lex_path:
+        arooz.load_lexicon(lex_path)
 
 
 def _one(item):
@@ -43,8 +45,10 @@ def main():
     ap.add_argument("csv")
     ap.add_argument("--n", type=int, default=300)
     ap.add_argument("--no-lex", action="store_true")
+    ap.add_argument("--lex", default=None, help="مسیرِ واژه‌نامهٔ جایگزین")
     ap.add_argument("--workers", type=int, default=max(1, mp.cpu_count() - 1))
     ap.add_argument("--seed", type=int, default=1)
+    ap.add_argument("--beam", type=int, default=None)
     args = ap.parse_args()
 
     print(f">> خواندنِ مجموعهٔ آزمون…", flush=True)
@@ -55,8 +59,9 @@ def main():
             break
     random.Random(args.seed).shuffle(pool_rows)
     sample = pool_rows[: args.n]
-    print(f">> {len(sample)} بیت از مجموعهٔ آزمون  |  واژه‌نامه: "
-          f"{'خاموش' if args.no_lex else 'روشن'}  |  {args.workers} پردازه", flush=True)
+    _tag = 'خاموش' if args.no_lex else (args.lex or 'پیش‌فرض')
+    print(f">> {len(sample)} بیت از مجموعهٔ آزمون  |  واژه‌نامه: {_tag}"
+          f"  |  {args.workers} پردازه", flush=True)
 
     t0 = time.time()
     ok = 0
@@ -65,7 +70,8 @@ def main():
     ranks = []
     done = 0
 
-    with mp.Pool(args.workers, initializer=_init, initargs=(args.no_lex,)) as pool:
+    with mp.Pool(args.workers, initializer=_init,
+                 initargs=(args.no_lex, args.lex, args.beam)) as pool:
         for gold, got, conf, rank in pool.imap_unordered(_one, sample, chunksize=1):
             done += 1
             hit = (got == gold)
