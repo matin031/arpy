@@ -106,19 +106,35 @@ def main():
     ap.add_argument("--out", default=os.path.join(
         os.path.dirname(os.path.abspath(__file__)), "lexicon.json"))
     ap.add_argument("--limit", type=int, default=None)
+    ap.add_argument("--skip", type=int, default=0,
+                    help="این تعداد بیتِ train را رد کن (برای ادامه‌دادن)")
+    ap.add_argument("--merge", action="store_true",
+                    help="روی واژه‌نامهٔ موجود بیفزا، از صفر شروع نکن")
     ap.add_argument("--workers", type=int, default=max(1, mp.cpu_count() - 1))
     args = ap.parse_args()
 
     print(f">> پیکره: {args.csv}")
     print(f">> خروجی: {args.out}")
-    print(f">> {args.workers} پردازه  |  فقط بخشِ train (۹۵٪)", flush=True)
+    print(f">> {args.workers} پردازه  |  فقط بخشِ train (۹۵٪)"
+          + (f"  |  از بیتِ {args.skip}" if args.skip else ""), flush=True)
 
     lex = defaultdict(Counter)
+    if args.merge and os.path.exists(args.out):
+        with open(args.out, encoding="utf-8") as f:
+            for w, c in json.load(f).items():
+                lex[w].update(c)
+        print(f">> ادامه از واژه‌نامهٔ موجود: {len(lex)} واژه")
     n_ok = n_bad = n_bayt = 0
     t0 = time.time()
     last_save = 0
 
-    src = p3r.rows(args.csv, split="train", limit=args.limit)
+    src = p3r.rows(args.csv, split="train",
+                   limit=(args.limit + args.skip) if args.limit else None)
+    if args.skip:
+        print(f">> رد کردنِ {args.skip} بیتِ نخست…", flush=True)
+        for _ in range(args.skip):
+            try: next(src)
+            except StopIteration: break
     with mp.Pool(args.workers, initializer=_init) as pool:
         for part, ok, bad in pool.imap_unordered(_batch, _chunks(src, BATCH)):
             for w, c in part.items():

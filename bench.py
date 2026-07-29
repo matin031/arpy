@@ -94,12 +94,16 @@ if __name__ == "__main__":
     ap.add_argument("--topk", type=int, default=None, help="LEX_TOPK")
     ap.add_argument("--quiet", action="store_true")
     ap.add_argument("--beam", type=int, default=None, help="پهنای پرتو")
+    ap.add_argument("--lex", default=None, help="مسیرِ واژه‌نامهٔ جایگزین")
     args = ap.parse_args()
 
     import arooz
     if args.no_lex:
         arooz.LEXICON = {}
         print(">> واژه‌نامه: خاموش")
+    elif args.lex:
+        n = arooz.load_lexicon(args.lex)
+        print(f">> واژه‌نامه: {args.lex} ({n} واژه)")
     else:
         print(f">> واژه‌نامه: {len(arooz.LEXICON)} واژه")
     if args.topk:
