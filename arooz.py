@@ -816,19 +816,69 @@ def _best_scan(scans, pat, name=None):
             if c < bc: bc = c; best = x
     return best or min(scans, key=lambda x: abs(len(x)-len(pat)))
 
-def detect(mesra1, mesra2=None):
-    """وزن‌یابی: کمینهٔ (ناهم‌خوانی + λ×نابـاورپذیری) روی هر دو مصراع؛
-    تساوی‌ها با بسامدِ گنجور شکسته می‌شود."""
+# ═══════════ ویژگی‌های نامزد + رتبه‌بندِ آموخته ═══════════
+# امتیازِ دستیِ زیر (c1+c2+prior+rare) جمعِ چند ضریبِ کوک‌شده روی چند ده نمونه
+# است. سنجشِ کنارگذاشته نشان داد پاسخِ درست در ۸۷٪ موارد بینِ ۳ نامزدِ اول است
+# ولی رتبهٔ ۱ فقط ۶۸٪ — یعنی گلوگاه همین جمعِ دستی است. اگر ranker.json کنارِ
+# موتور باشد، وزن‌ها از دادهٔ برچسب‌خورده *آموخته* می‌شوند نه حدس‌زده.
+FEATURES = ("c1","c2","cmin","cmax","cdiff","lfreq","rare","generic","nfeet","plen","fam")
+COST_CAP = 20.0     # meter_cost برای طولِ ناجور ۹۹۹ برمی‌گرداند؛ برای مدلِ خطی سقف لازم است
+RANKER = None       # {"bias": float, "w": {نامِ‌ویژگی: وزن}}
+
+def load_ranker(path=None):
+    global RANKER
+    path = path or os.path.join(os.path.dirname(os.path.abspath(__file__)), 'ranker.json')
+    if os.path.exists(path):
+        with open(path, encoding='utf-8') as f: RANKER = json.load(f)
+    return RANKER is not None
+
+try: load_ranker()
+except Exception: pass
+
+
+def _feats(n, a, p, f, c1, c2):
+    """ویژگی‌های یک نامزد. آموزش و استنتاج هر دو از همین تابع می‌خوانند."""
+    q1 = min(c1, COST_CAP); q2 = min(c2, COST_CAP)
+    return {'c1': q1, 'c2': q2,
+            'cmin': min(q1, q2), 'cmax': max(q1, q2), 'cdiff': abs(q1 - q2),
+            'lfreq': math.log10(f + 0.05),
+            'rare': 1.0 if f < RARE_TAIL_FREQ else 0.0,
+            'generic': 1.0 if n == a else 0.0,
+            'nfeet': float(len(a.split())),
+            'plen': float(len(p)),
+            'fam': 1.0 if n in _FAM_PAT else 0.0}
+
+
+def candidate_rows(mesra1, mesra2=None):
+    """همهٔ اوزان به‌عنوان نامزد + ویژگی‌هایشان، بی‌امتیازدهی.
+       (تفکیکِ «تولیدِ نامزد» از «رتبه‌بندی» تا هر دو مستقل سنجیده شوند.)"""
     s1=scan_line(mesra1); s2=scan_line(mesra2) if mesra2 is not None else None
     i1=_by_len(s1); i2=_by_len(s2) if s2 is not None else None
     rows=[]
     for n,a,p,f in METERS:
         c1=meter_cost(i1,p,n)
         c2=meter_cost(i2,p,n) if s2 is not None else c1
-        prior = -MU*math.log10(f+0.05)          # بسامدِ بالا → امتیازِ کمتر (بهتر)
-        rare = RARE_TAIL_PENALTY if f < RARE_TAIL_FREQ else 0.0
-        rows.append(dict(name=n,ark=a,pat=p,freq=f,c1=c1,c2=c2,
-                         summ=c1+c2, score=c1+c2+prior+rare))
+        rows.append(dict(name=n,ark=a,pat=p,freq=f,c1=c1,c2=c2,summ=c1+c2,
+                         feat=_feats(n,a,p,f,c1,c2)))
+    return rows, s1, s2
+
+
+def _base_score(r):
+    """امتیازِ پایه: آموخته اگر ranker.json باشد، وگرنه همان جمعِ دستیِ پیشین."""
+    if RANKER is not None:
+        w = RANKER['w']; ft = r['feat']
+        return RANKER.get('bias', 0.0) + sum(w[k]*ft[k] for k in w if k in ft)
+    prior = -MU*math.log10(r['freq']+0.05)   # بسامدِ بالا → امتیازِ کمتر (بهتر)
+    rare = RARE_TAIL_PENALTY if r['freq'] < RARE_TAIL_FREQ else 0.0
+    return r['c1'] + r['c2'] + prior + rare
+
+
+def detect(mesra1, mesra2=None):
+    """وزن‌یابی: کمینهٔ (ناهم‌خوانی + λ×نابـاورپذیری) روی هر دو مصراع؛
+    تساوی‌ها با بسامدِ گنجور شکسته می‌شود."""
+    rows, s1, s2 = candidate_rows(mesra1, mesra2)
+    for r in rows:
+        r['score'] = _base_score(r)
     rows.sort(key=lambda r:(round(r["score"],3), -r["freq"]))
     if len(LEXICON) >= LEX_MIN:               # مرحلهٔ ۲: بازرتبه‌بندی (فقط با واژه‌نامهٔ بزرگ)
         for r in rows[:LEX_TOPK]:
