@@ -1,94 +1,149 @@
 # -*- coding: utf-8 -*-
 """
-build_lexicon.py — ساختِ «واژه‌نامهٔ عروضیِ کلاسیک» از پیکرهٔ برچسب‌خوردهٔ گنجور
+build_lexicon.py — ساختِ واژه‌نامهٔ عروضی از پیکرهٔ *برچسب‌خوردهٔ* P3R
 
 ایده
 ────
-موتورِ قاعده‌محور نمی‌داند واژه در شعر چه وزنی می‌گیرد، پس برای هر مصراع
-هزاران خوانش می‌سازد و وزنِ غلط هم تصادفاً جور درمی‌آید.
-ولی اگر بیتی را داشته باشیم که وزنش *معلوم* است، می‌توان با هم‌ترازیِ
-وزن‌مقید فهمید هر واژه **در عمل** چه رشتهٔ وزنی گرفته است.
-روی ۱.۳ میلیون بیت، این می‌شود یک واژه‌نامهٔ آماریِ تلفظِ عروضی.
+موتور نمی‌داند واژه در شعرِ کلاسیک چه وزنی می‌گیرد، پس برای هر مصراع هزاران
+خوانش می‌سازد و وزنِ غلط هم تصادفاً «تطبیقِ کامل» پیدا می‌کند.
+ولی وقتی وزنِ بیت را *از پیش* بدانیم، هم‌ترازیِ وزن‌مقید می‌گوید هر واژه
+**در عمل** چه رشتهٔ وزنی گرفته است. روی ۱.۳ میلیون بیت این می‌شود یک
+واژه‌نامهٔ آماریِ تلفظِ عروضی.
 
-خروجی:  lexicon.json  =  { "واژه": {"-U": 1523, "U-": 44}, ... }
-arooz.py خودش آن را می‌خوانَد (اگر کنارش باشد).
+★ چرا این با bootstrap_lexicon.py فرق دارد
+   آن یکی وزن را با حدسِ خودِ موتور برچسب می‌زند و بعد روی همان حدس‌ها
+   آموزش می‌بیند — دوری است و خطاهای موتور را تقویت می‌کند.
+   این یکی از برچسبِ *انسانیِ* P3R استفاده می‌کند: غیرِدوری.
+
+★ تفکیکِ آموزش/آزمون
+   فقط روی بخشِ 'train' آموزش می‌بیند (p3r.split_of)، تا eval_p3r.py بتواند
+   دقتِ صادقانه بسنجد.
 
 اجرا
 ────
-    python build_lexicon.py  P3R.csv  [--limit N]
+    # دانلودِ پیکره (۲۰۸ مگابایت، یک‌بار)
+    curl -L -o P3R.csv https://media.githubusercontent.com/media/m-shahrestani/Prosody-Recognition-in-Persian-Poetry/master/dataset/P3R.csv
 
-دانلودِ دیتاست (۲۰۸ مگابایت، یک‌بار):
-    https://media.githubusercontent.com/media/m-shahrestani/Prosody-Recognition-in-Persian-Poetry/master/dataset/P3R.csv
+    python build_lexicon.py P3R.csv                 # کاملِ پیکره
+    python build_lexicon.py P3R.csv --limit 200000  # تندتر، کم‌دقت‌تر
+    python build_lexicon.py P3R.csv --workers 8
+
+هر ۲۰۰۰۰ بیت یک checkpoint روی lexicon.json نوشته می‌شود؛ می‌شود وسطِ کار
+متوقفش کرد و همان را برداشت.
 """
-import sys, json, csv, re
+import sys, os, json, time, argparse
+import multiprocessing as mp
 from collections import defaultdict, Counter
-import arooz
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import p3r
+
+MIN_COUNT = 2          # واژه‌ای که کمتر از این دیده شده نویز است
+BATCH = 500
 
 
-# ═══════════════════ هم‌ترازیِ وزن‌مقید (DP) ═══════════════════
-# ═══════════════════ ساختِ واژه‌نامه ═══════════════════
-align = arooz.align
+def _init():
+    """در هر پردازه: موتور را بدونِ واژه‌نامه بار کن (اینجا فقط align لازم است،
+    و واژه‌نامهٔ قدیمی نباید در ساختِ واژه‌نامهٔ تازه دخالت کند)."""
+    import arooz
+    arooz.LEXICON = {}
+    global _PAT_OF
+    _PAT_OF = {ark: pat for _, ark, pat, _ in arooz.METERS}
 
 
-def build(csv_path, limit=None, out='lexicon.json'):
-    pat_of = {}
-    for name, ark, pat, fr in arooz.METERS:
-        pat_of[ark] = pat
+def _batch(items):
+    """یک دسته بیت → (شمارشِ واژه‌ها، تعدادِ مصراعِ موفق، ناموفق)"""
+    import arooz
+    lex = defaultdict(Counter)
+    ok = bad = 0
+    for v1, v2, ark in items:
+        pat = _PAT_OF.get(ark)
+        if not pat:
+            continue
+        for mesra in (v1, v2):
+            if not mesra:
+                continue
+            try:
+                a = arooz.align(mesra, pat)
+            except Exception:
+                a = None
+            if not a:
+                bad += 1
+                continue
+            ok += 1
+            # align → [(واژه، رشتهٔ وزن), ...]   (واژه‌های وصل‌دار خودش انداخته)
+            for w, wt in a:
+                lex[w][wt] += 1
+        # کشِ موتور بی‌کران است و رم را می‌خورد
+        if len(arooz._EXP_CACHE) > 4000:
+            arooz._EXP_CACHE.clear()
+    return {w: dict(c) for w, c in lex.items()}, ok, bad
+
+
+def _chunks(it, n):
+    buf = []
+    for x in it:
+        buf.append(x)
+        if len(buf) >= n:
+            yield buf
+            buf = []
+    if buf:
+        yield buf
+
+
+def save(lex, out):
+    final = {w: dict(c) for w, c in lex.items() if sum(c.values()) >= MIN_COUNT}
+    tmp = out + ".tmp"
+    with open(tmp, "w", encoding="utf-8") as f:
+        json.dump(final, f, ensure_ascii=False)
+    os.replace(tmp, out)          # اتمیک: checkpoint نصفه‌کاره فایل را خراب نکند
+    return len(final)
+
+
+def main():
+    ap = argparse.ArgumentParser()
+    ap.add_argument("csv")
+    ap.add_argument("--out", default=os.path.join(
+        os.path.dirname(os.path.abspath(__file__)), "lexicon.json"))
+    ap.add_argument("--limit", type=int, default=None)
+    ap.add_argument("--workers", type=int, default=max(1, mp.cpu_count() - 1))
+    args = ap.parse_args()
+
+    print(f">> پیکره: {args.csv}")
+    print(f">> خروجی: {args.out}")
+    print(f">> {args.workers} پردازه  |  فقط بخشِ train (۹۵٪)", flush=True)
 
     lex = defaultdict(Counter)
-    n_ok = n_bad = n_nometer = 0
+    n_ok = n_bad = n_bayt = 0
+    t0 = time.time()
+    last_save = 0
 
-    with open(csv_path, encoding='utf-8') as f:
-        rd = csv.DictReader(f)
-        cols = rd.fieldnames
-        cv = next((c for c in cols if 'verse' in c.lower() or 'text' in c.lower()
-                   or 'mesra' in c.lower() or 'poem' in c.lower()), cols[0])
-        cm = next((c for c in cols if 'prosody' in c.lower() and 'id' not in c.lower()), None)
-        if cm is None:
-            cm = next(c for c in cols if 'prosody' in c.lower())
-        print(f"ستون‌ها: متن={cv}  وزن={cm}")
+    src = p3r.rows(args.csv, split="train", limit=args.limit)
+    with mp.Pool(args.workers, initializer=_init) as pool:
+        for part, ok, bad in pool.imap_unordered(_batch, _chunks(src, BATCH)):
+            for w, c in part.items():
+                lex[w].update(c)
+            n_ok += ok
+            n_bad += bad
+            n_bayt += BATCH
+            if n_bayt - last_save >= 20000:
+                last_save = n_bayt
+                nw = save(lex, args.out)
+                el = time.time() - t0
+                rate = n_bayt / el
+                print(f"  بیت={n_bayt:>8}  مصراعِ هم‌ترازشده={n_ok:>8}  "
+                      f"ناموفق={n_bad:>7}  واژه={nw:>7}   "
+                      f"({el/60:.1f} دقیقه، {rate:.0f} بیت/ثانیه)", flush=True)
 
-        for i, row in enumerate(rd):
-            if limit and i >= limit:
-                break
-            if i and i % 20000 == 0:
-                print(f"  {i:>8} بیت | موفق={n_ok} ناموفق={n_bad} بی‌وزن={n_nometer} | واژه={len(lex)}")
-            ark = (row.get(cm) or '').strip()
-            pat = pat_of.get(ark)
-            if not pat:
-                n_nometer += 1
-                continue
-            text = (row.get(cv) or '').strip()
-            for mesra in re.split(r'[|\t]|\s{3,}', text):
-                mesra = mesra.strip()
-                if not mesra:
-                    continue
-                try:
-                    a = align(mesra, pat)
-                except Exception:
-                    a = None
-                if not a:
-                    n_bad += 1
-                    continue
-                n_ok += 1
-                ws = arooz.normalize(mesra).split()
-                for wi, wt in a.items():
-                    if wi < len(ws):
-                        lex[ws[wi]][wt] += 1
-
-    # فقط واژه‌هایی که دستِ‌کم ۲ بار دیده شده‌اند (حذفِ نویز)
-    final = {w: dict(c) for w, c in lex.items() if sum(c.values()) >= 2}
-    with open(out, 'w', encoding='utf-8') as f:
-        json.dump(final, f, ensure_ascii=False)
-    print(f"\n✅ {out}: {len(final)} واژه  |  مصراعِ هم‌ترازشده: {n_ok}  ناموفق: {n_bad}")
-    return final
+    nw = save(lex, args.out)
+    el = time.time() - t0
+    print()
+    print(f"✅ {args.out}: {nw} واژه")
+    print(f"   {n_ok} مصراعِ هم‌ترازشده، {n_bad} ناموفق  |  {el/60:.1f} دقیقه")
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     if len(sys.argv) < 2:
         print(__doc__)
         sys.exit(1)
-    lim = None
-    if '--limit' in sys.argv:
-        lim = int(sys.argv[sys.argv.index('--limit') + 1])
-    build(sys.argv[1], lim)
+    main()
