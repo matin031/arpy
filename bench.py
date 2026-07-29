@@ -93,6 +93,7 @@ if __name__ == "__main__":
     ap.add_argument("--no-lex", action="store_true", help="واژه‌نامه را خاموش کن")
     ap.add_argument("--topk", type=int, default=None, help="LEX_TOPK")
     ap.add_argument("--quiet", action="store_true")
+    ap.add_argument("--beam", type=int, default=None, help="پهنای پرتو")
     args = ap.parse_args()
 
     import arooz
@@ -104,4 +105,7 @@ if __name__ == "__main__":
     if args.topk:
         arooz.LEX_TOPK = args.topk
         print(f">> LEX_TOPK = {args.topk}")
+    if args.beam:
+        arooz.BEAM = args.beam
+        print(f">> BEAM = {args.beam}")
     run(quiet=args.quiet)
