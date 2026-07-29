@@ -792,7 +792,18 @@ def _by_len(scans):
 
 def meter_cost(idx, pat, name=None):
     """کمینهٔ (ناهم‌خوانی + λ×نابـاورپذیری + جریمهٔ اختیار) — برداری‌شده"""
-    best = 999.0
+    return meter_cost_detail(idx, pat, name)['cost']
+
+
+_NO_FIT = dict(cost=999.0, hard=99.0, soft=99.0, spen=9.0, vpen=9.0,
+               vlen=0, vid='', fit=0.0)
+
+def meter_cost_detail(idx, pat, name=None):
+    """مثلِ meter_cost ولی اجزای هزینه را هم برمی‌گرداند.
+       ★ meter_cost سه چیزِ جدا را در یک عدد می‌کوبد (ناهم‌خوانیِ سخت، اختیارِ
+       زبانی، نابـاورپذیریِ خوانش، جریمهٔ گونه) و دور می‌ریزد که کدام گونه برنده
+       شد. رتبه‌بند بدونِ این تفکیک نمی‌تواند بین نامزدهای نزدیک داوری کند."""
+    best = None
     for v, vp in meter_variants(pat, name).items():
         ent = idx.get(len(v))
         if ent is None: continue
@@ -801,10 +812,16 @@ def meter_cost(idx, pat, name=None):
         V = (V == ord('-')).astype(_np.int8)
         D = A[:, :-1] != V[:-1]                       # هجای پایانی آزاد
         SL = (A[:, :-1] == 0) & (V[:-1] == 1)         # کوتاه در جایگاهِ بلند = اختیار
-        cost = (0.5 * SL + 1.0 * (D & ~SL)).sum(axis=1) + LAMBDA * P + vp
-        m = float(cost.min())
-        if m < best: best = m
-    return best
+        hard = (D & ~SL).sum(axis=1)
+        soft = SL.sum(axis=1)
+        cost = 0.5*soft + 1.0*hard + LAMBDA*P + vp
+        j = int(cost.argmin())
+        m = float(cost[j])
+        if best is None or m < best['cost']:
+            best = dict(cost=m, hard=float(hard[j]), soft=float(soft[j]),
+                        spen=float(P[j]), vpen=float(vp), vlen=len(v), vid=v,
+                        fit=1.0)
+    return best if best is not None else dict(_NO_FIT)
 
 def _best_scan(scans, pat, name=None):
     if not scans: return None
@@ -821,7 +838,8 @@ def _best_scan(scans, pat, name=None):
 # است. سنجشِ کنارگذاشته نشان داد پاسخِ درست در ۸۷٪ موارد بینِ ۳ نامزدِ اول است
 # ولی رتبهٔ ۱ فقط ۶۸٪ — یعنی گلوگاه همین جمعِ دستی است. اگر ranker.json کنارِ
 # موتور باشد، وزن‌ها از دادهٔ برچسب‌خورده *آموخته* می‌شوند نه حدس‌زده.
-FEATURES = ("c1","c2","cmin","cmax","cdiff","lfreq","rare","generic","nfeet","plen","fam")
+FEATURES = ("c1","c2","cmin","cmax","cdiff","lfreq","rare","generic","nfeet","plen","fam",
+            "hard1","hard2","soft1","soft2","spen1","spen2","vpen","samevar","nofit","vlen")
 COST_CAP = 20.0     # meter_cost برای طولِ ناجور ۹۹۹ برمی‌گرداند؛ برای مدلِ خطی سقف لازم است
 RANKER = None       # {"bias": float, "w": {نامِ‌ویژگی: وزن}}
 
@@ -836,8 +854,9 @@ try: load_ranker()
 except Exception: pass
 
 
-def _feats(n, a, p, f, c1, c2):
+def _feats(n, a, p, f, d1, d2):
     """ویژگی‌های یک نامزد. آموزش و استنتاج هر دو از همین تابع می‌خوانند."""
+    c1, c2 = d1['cost'], d2['cost']
     q1 = min(c1, COST_CAP); q2 = min(c2, COST_CAP)
     return {'c1': q1, 'c2': q2,
             'cmin': min(q1, q2), 'cmax': max(q1, q2), 'cdiff': abs(q1 - q2),
@@ -846,7 +865,17 @@ def _feats(n, a, p, f, c1, c2):
             'generic': 1.0 if n == a else 0.0,
             'nfeet': float(len(a.split())),
             'plen': float(len(p)),
-            'fam': 1.0 if n in _FAM_PAT else 0.0}
+            'fam': 1.0 if n in _FAM_PAT else 0.0,
+            # ── اجزای تفکیک‌شدهٔ هزینه ──
+            'hard1': min(d1['hard'], COST_CAP), 'hard2': min(d2['hard'], COST_CAP),
+            'soft1': min(d1['soft'], COST_CAP), 'soft2': min(d2['soft'], COST_CAP),
+            'spen1': min(d1['spen'], COST_CAP), 'spen2': min(d2['spen'], COST_CAP),
+            'vpen': max(d1['vpen'], d2['vpen']),
+            # ★ بیتِ واقعی باید در هر دو مصراع *همان* گونهٔ وزنی را بگیرد؛
+            #   ناهمخوانیِ گونه نشانهٔ جورشدنِ تصادفی است. تا حالا نادیده بود.
+            'samevar': 1.0 if (d1['vid'] and d1['vid'] == d2['vid']) else 0.0,
+            'nofit': (1.0 - d1['fit']) + (1.0 - d2['fit']),
+            'vlen': float(d1['vlen'] or d2['vlen'])}
 
 
 def candidate_rows(mesra1, mesra2=None):
@@ -856,10 +885,11 @@ def candidate_rows(mesra1, mesra2=None):
     i1=_by_len(s1); i2=_by_len(s2) if s2 is not None else None
     rows=[]
     for n,a,p,f in METERS:
-        c1=meter_cost(i1,p,n)
-        c2=meter_cost(i2,p,n) if s2 is not None else c1
-        rows.append(dict(name=n,ark=a,pat=p,freq=f,c1=c1,c2=c2,summ=c1+c2,
-                         feat=_feats(n,a,p,f,c1,c2)))
+        d1=meter_cost_detail(i1,p,n)
+        d2=meter_cost_detail(i2,p,n) if s2 is not None else d1
+        rows.append(dict(name=n,ark=a,pat=p,freq=f,
+                         c1=d1['cost'],c2=d2['cost'],summ=d1['cost']+d2['cost'],
+                         feat=_feats(n,a,p,f,d1,d2)))
     return rows, s1, s2
 
 
