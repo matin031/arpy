@@ -127,27 +127,41 @@ def expand_ambiguous(toks, full=False):
            'Zy':[([],0),([('C','ی'),('v','')],0)] + ([([('C','ی'),('V','')],1)] if full else [])}
     _k=(tuple(toks), full)
     if _k in _EXP_CACHE: return _EXP_CACHE[_k]
-    res=[([],0)]
+    # ★ هر خوانش یک «کلیدِ مسیر» هم با خود می‌برد: شمارهٔ گزینه‌ای که در هر
+    #   انشعاب برداشته. چرا لازم است: هرسِ زیر با [:BEAM] می‌بُرد، و میانِ
+    #   خوانش‌هایی که جریمهٔ *برابر* دارند این‌که کدام بماند به ترتیبِ ساخت
+    #   بستگی داشت. پورتِ TypeScript در یک شاخه (S) ترتیبِ دیگری داشت و همان
+    #   کافی بود که دو موتور روی ۶۵۰ خوانش از ۲۰۰۰ اختلاف پیدا کنند — بی هیچ
+    #   خطایی، فقط جوابِ فرق. با مرتب‌سازی روی (جریمه، کلیدِ مسیر) ترتیب دیگر
+    #   به نحوهٔ نوشتنِ حلقه‌ها وابسته نیست و در هر دو زبان یکی است.
+    #   ساختِ کلید O(۱) است: یک رقم به کلیدِ پدر.
+    res=[([],0,'')]
     for t in toks:
         s=t[0]
         if s in('C','V','v','B'):
-            res=[(r+[t],p) for r,p in res]
+            res=[(r+[t],p,k) for r,p,k in res]
         elif s=='Z':
             key='Zy' if t[1]=='ی' else 'Z'
-            res=[(r+o,p+q) for r,p in res for o,q in MULTI[key]]
+            res=[(r+o,p+q,k+str(i)) for r,p,k in res
+                 for i,(o,q) in enumerate(MULTI[key])]
         elif s in MULTI:
-            res=[(r+o,p+q) for r,p in res for o,q in MULTI[s]]
+            res=[(r+o,p+q,k+str(i)) for r,p,k in res
+                 for i,(o,q) in enumerate(MULTI[s])]
         elif s=='S':
-            res=[(r+[('V',t[1])],p) for r,p in res] + [(r+[('v','')],p+1) for r,p in res]
+            # (پیش‌تر دو درک‌نامه به‌هم چسبانده می‌شد؛ حالا مثلِ بقیهٔ شاخه‌ها
+            #  حلقهٔ بیرونی روی خوانش‌ها است، که با کلیدِ مسیر هم هم‌خوان است.)
+            res=[(r+[o],p+q,k+str(i)) for r,p,k in res
+                 for i,(o,q) in enumerate(((('V',t[1]),0),(('v',''),1)))]
         else:
-            res=[(r+[o],p+q) for r,p in res for o,q in OPT[s]]
+            res=[(r+[o],p+q,k+str(i)) for r,p,k in res
+                 for i,(o,q) in enumerate(OPT[s])]
         if len(res)>4000:
-            res=sorted(res,key=lambda z:z[1])
+            res.sort(key=lambda z:(z[1],z[2]))
             mn=res[0][1]
             res=[x for x in res if x[1]<=mn+PEN_MAX][:BEAM]
-    res.sort(key=lambda z:z[1])
+    res.sort(key=lambda z:(z[1],z[2]))
     mn=res[0][1] if res else 0
-    res=[x for x in res if x[1]<=mn+PEN_MAX]
+    res=[(r,p) for r,p,k in res if p<=mn+PEN_MAX]
     _EXP_CACHE[_k]=res
     return res
 
