@@ -54,10 +54,20 @@ def _one(item):
 def extract(args):
     import arooz
     print(f">> ویژگی‌ها: {list(arooz.FEATURES)}")
-    print(f">> {args.n} بیتِ آموزشی (پرش={args.skip})، "
+    stride = args.stride
+    if args.spread:
+        # نمونه از سرتاسرِ پیکره، نه از ابتدای آن — پیکره بر پایهٔ منبع مرتب
+        # است و «n ردیفِ نخست» توزیعِ وزن‌ها را به‌شدت کج می‌کند.
+        # ★ آرگومان، اندازهٔ نمونهٔ *نهایی* است نه اندازهٔ این تکه؛ وگرنه دو
+        #   تکه با گام‌های متفاوت برداشته می‌شوند و کنارِ هم بی‌معنا می‌شوند.
+        tot = p3r.count(args.csv, split="train")
+        stride = max(1, tot // max(1, args.spread))
+        print(f">> {tot} بیتِ آموزشی در پیکره، نمونهٔ نهایی {args.spread} "
+              f"→ گامِ نمونه‌گیری {stride}")
+    print(f">> {args.n} بیتِ آموزشی (پرش={args.skip}، گام={stride})، "
           f"{args.workers} پردازه", flush=True)
     sample = list(p3r.rows(args.csv, split="train", limit=args.n,
-                           skip=args.skip))
+                           skip=args.skip, stride=stride))
     Xs, gis = [], []
     t0 = time.time()
     # ★ imap (نه imap_unordered): ترتیبِ خروجی باید قطعی باشد، وگرنه تفکیکِ
@@ -171,6 +181,11 @@ if __name__ == "__main__":
     e.add_argument("--n", type=int, default=3000)
     e.add_argument("--skip", type=int, default=0,
                    help="از n بیتِ نخستِ تفکیکِ آموزش بگذر (استخراجِ تکه‌تکه)")
+    e.add_argument("--stride", type=int, default=1,
+                   help="فقط هر n-اُمین بیت (نمونه از سرتاسرِ پیکره)")
+    e.add_argument("--spread", type=int, metavar="کلِ‌نمونه",
+                   help="گام را طوری حساب کن که نمونهٔ نهایی (مجموعِ همهٔ "
+                        "تکه‌ها) کلِ پیکره را بپوشاند")
     e.add_argument("--out", default="/tmp/feats.npz")
     e.add_argument("--workers", type=int, default=max(1, mp.cpu_count() - 1))
     f_ = sub.add_parser("fit"); f_.add_argument("file")
