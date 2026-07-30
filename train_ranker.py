@@ -58,8 +58,11 @@ def extract(args):
     sample = list(p3r.rows(args.csv, split="train", limit=args.n))
     Xs, gis = [], []
     t0 = time.time()
+    # ★ imap (نه imap_unordered): ترتیبِ خروجی باید قطعی باشد، وگرنه تفکیکِ
+    #   آموزش/اعتبارسنجی در هر اجرا بیت‌های دیگری را برمی‌دارد و دو اجرا
+    #   قابلِ مقایسه نیستند — که یک‌بار مرا به نتیجه‌گیریِ غلط رساند.
     with mp.Pool(args.workers, initializer=_init) as pool:
-        for i, res in enumerate(pool.imap_unordered(_one, sample, chunksize=4), 1):
+        for i, res in enumerate(pool.imap(_one, sample, chunksize=4), 1):
             if res is not None:
                 Xs.append(res[0]); gis.append(res[1])
             if i % 200 == 0:

@@ -842,16 +842,34 @@ def _best_scan(scans, pat, name=None):
 # است. سنجشِ کنارگذاشته نشان داد پاسخِ درست در ۸۷٪ موارد بینِ ۳ نامزدِ اول است
 # ولی رتبهٔ ۱ فقط ۶۸٪ — یعنی گلوگاه همین جمعِ دستی است. اگر ranker.json کنارِ
 # موتور باشد، وزن‌ها از دادهٔ برچسب‌خورده *آموخته* می‌شوند نه حدس‌زده.
+#
+# ★ قاعدهٔ افزودنِ ویژگی — با هزینه آموخته شد:
+#   ویژگی باید *میانِ نامزدهای یک بیت* تغییر کند. آموزش، softmax روی نامزدهای
+#   همان بیت است و softmax به شیفتِ ثابتِ هر سطر بی‌اعتناست؛ پس ویژگی‌ای که
+#   درونِ یک بیت ثابت باشد صفر اطلاعاتِ *رتبه‌بندی* دارد، ولی همچنان گرادیان
+#   می‌گیرد (با سختیِ بیت همبسته است) و سهمی را می‌بلعد که باید به ویژگی‌های
+#   مفید برسد.
+#   ۹ ویژگی افزودم و دقت ۴.۵ واحد *پایین* آمد (۷۶.۶٪ → ۷۲.۱٪ روی تفکیکِ یکسان؛
+#   ۷۵.۵٪ → ۷۲.۸٪ روی مجموعهٔ آزمونِ کنارگذاشته). تفکیکِ گروهی مقصر را نشان داد:
+#       مبنا + hpos/early                  ۷۶.۲٪  (−۰.۳)
+#       مبنا + dcost/dspen/dhard           ۷۶.۸٪  (+۰.۲ ≈ نوسان)
+#       مبنا + isbest/nties                ۷۰.۵٪  (−۶.۱)  ← این
+#   و اندازه‌گیریِ انحرافِ درون‌بیتی دلیل را داد: nties دقیقاً صفر انحراف داشت
+#   (یک عددِ ازای هر بیت)، و dcost/dspen/dhard عیناً cmin/spen/hard منهای کمینهٔ
+#   همان بیت بودند — انحرافِ اختلاف ۲e-۸، یعنی تکرارِ مطلقِ ویژگیِ موجود.
+#   با `python ablate.py <feats.npz> --groups` قابلِ بازتولید است.
 FEATURES = ("c1","c2","cmin","cmax","cdiff","lfreq","rare","generic","nfeet","plen","fam",
             "hard1","hard2","soft1","soft2","spen1","spen2","vpen","samevar","nofit","vlen")
 COST_CAP = 20.0     # meter_cost برای طولِ ناجور ۹۹۹ برمی‌گرداند؛ برای مدلِ خطی سقف لازم است
-RANKER = None       # {"bias": float, "w": {نامِ‌ویژگی: وزن}}
+RANKER = None       # خطی: {"bias", "w"} | غیرخطی: {"kind":"mlp", "W1","b1","w2","b2",…}
+_MLP = None         # آرایه‌های numpy، یک‌بار ساخته می‌شوند (نه در هر بیت)
 
 def load_ranker(path=None):
-    global RANKER
+    global RANKER, _MLP
     path = path or os.path.join(os.path.dirname(os.path.abspath(__file__)), 'ranker.json')
     if os.path.exists(path):
         with open(path, encoding='utf-8') as f: RANKER = json.load(f)
+    _MLP = None
     return RANKER is not None
 
 try: load_ranker()
@@ -900,6 +918,8 @@ def candidate_rows(mesra1, mesra2=None):
 def _base_score(r):
     """امتیازِ پایه: آموخته اگر ranker.json باشد، وگرنه همان جمعِ دستیِ پیشین."""
     if RANKER is not None:
+        if RANKER.get('kind') == 'mlp':
+            return _score_rows([r])[0]
         w = RANKER['w']; ft = r['feat']
         return RANKER.get('bias', 0.0) + sum(w[k]*ft[k] for k in w if k in ft)
     prior = -MU*math.log10(r['freq']+0.05)   # بسامدِ بالا → امتیازِ کمتر (بهتر)
@@ -907,12 +927,36 @@ def _base_score(r):
     return r['c1'] + r['c2'] + prior + rare
 
 
+def _score_rows(rows):
+    """امتیازِ همهٔ نامزدهای یک بیت — کمترین بهترین.
+
+    برای رتبه‌بندِ غیرخطی این تابع (و نه _base_score) مسیرِ اصلی است: یک ضربِ
+    (۱۷۶×۲۱)·(۲۱×۳۲) به‌جای ۱۷۶ ضربِ کوچک، که در پایتون تفاوتِ محسوسی دارد.
+    """
+    if RANKER is None or RANKER.get('kind') != 'mlp':
+        return [_base_score(r) for r in rows]
+    global _MLP
+    if _MLP is None:
+        R = RANKER
+        _MLP = (list(R['feats']),
+                _np.asarray(R['mu'], dtype=_np.float64),
+                _np.asarray(R['sd'], dtype=_np.float64),
+                _np.asarray(R['W1'], dtype=_np.float64),
+                _np.asarray(R['b1'], dtype=_np.float64),
+                _np.asarray(R['w2'], dtype=_np.float64),
+                float(R['b2']))
+    fs, mu, sd, W1, b1, w2, b2 = _MLP
+    X = _np.array([[r['feat'][k] for k in fs] for r in rows], dtype=_np.float64)
+    H = _np.tanh(((X - mu) / sd) @ W1 + b1)
+    return (H @ w2 + b2).tolist()
+
+
 def detect(mesra1, mesra2=None):
     """وزن‌یابی: کمینهٔ (ناهم‌خوانی + λ×نابـاورپذیری) روی هر دو مصراع؛
     تساوی‌ها با بسامدِ گنجور شکسته می‌شود."""
     rows, s1, s2 = candidate_rows(mesra1, mesra2)
-    for r in rows:
-        r['score'] = _base_score(r)
+    for r, sc in zip(rows, _score_rows(rows)):
+        r['score'] = sc
     rows.sort(key=lambda r:(round(r["score"],3), -r["freq"]))
     if len(LEXICON) >= LEX_MIN:               # مرحلهٔ ۲: بازرتبه‌بندی (فقط با واژه‌نامهٔ بزرگ)
         for r in rows[:LEX_TOPK]:
