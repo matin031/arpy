@@ -19,9 +19,19 @@ say() { echo -e "\n═══ $* ═══" | tee -a "$LOG"; }
 say "۱/۴ دقتِ کنارگذاشته با رتبه‌بندِ فعلی، روی معناشناسیِ تازه"
 python3 eval_p3r.py "$CSV" --n 400 --workers 4 2>&1 | tee -a "$LOG" | tail -14
 
-say "۲/۴ استخراجِ ویژگی از $N بیت (معناشناسیِ تازه)"
-python3 train_ranker.py extract "$CSV" --n "$N" --workers 3 \
-        --out /tmp/feats_new.npz 2>&1 | tee -a "$LOG" | tail -3
+say "۲/۴ استخراجِ ویژگی از $N بیت (دو تکه، نمونه از سرتاسرِ پیکره)"
+# ★ دو نکته که هر کدام یک‌بار گران تمام شد:
+#   --spread: بدونِ آن، «n ردیفِ نخست» برداشته می‌شود و چون پیکره بر پایهٔ
+#     منبع مرتب است نمونه به‌شدت کج می‌شود (فاصلهٔ توزیع تا آزمون ۳۶٪ در برابر
+#     ۲.۴٪). آن‌وقت اعتبارسنجی بالا می‌رود و دقتِ واقعی تکان نمی‌خورد.
+#   دو تکه: کارِ پس‌زمینهٔ طولانی در این محیط گاهی نیمه‌کاره کشته می‌شود.
+H=$(( N / 2 ))
+python3 train_ranker.py extract "$CSV" --n "$H" --skip 0  --spread "$N" \
+        --workers 3 --out /tmp/feats_a.npz 2>&1 | tee -a "$LOG" | tail -2
+python3 train_ranker.py extract "$CSV" --n "$H" --skip "$H" --spread "$N" \
+        --workers 3 --out /tmp/feats_b.npz 2>&1 | tee -a "$LOG" | tail -2
+python3 train_ranker.py merge /tmp/feats_a.npz /tmp/feats_b.npz \
+        --out /tmp/feats_new.npz 2>&1 | tee -a "$LOG" | tail -2
 
 say "۳/۴ برازشِ شبکه (و مبنای خطی روی همان تفکیک)"
 python3 train_mlp.py /tmp/feats_new.npz --hidden 32 \
