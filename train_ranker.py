@@ -67,7 +67,7 @@ def extract(args):
     print(f">> {args.n} بیتِ آموزشی (پرش={args.skip}، گام={stride})، "
           f"{args.workers} پردازه", flush=True)
     sample = list(p3r.rows(args.csv, split="train", limit=args.n,
-                           skip=args.skip, stride=stride))
+                           skip=args.skip, stride=stride, offset=args.offset))
     Xs, gis = [], []
     t0 = time.time()
     # ★ imap (نه imap_unordered): ترتیبِ خروجی باید قطعی باشد، وگرنه تفکیکِ
@@ -183,6 +183,9 @@ if __name__ == "__main__":
                    help="از n بیتِ نخستِ تفکیکِ آموزش بگذر (استخراجِ تکه‌تکه)")
     e.add_argument("--stride", type=int, default=1,
                    help="فقط هر n-اُمین بیت (نمونه از سرتاسرِ پیکره)")
+    e.add_argument("--offset", type=int, default=0,
+                   help="نقطهٔ شروعِ گام — برای بزرگ‌کردنِ نمونهٔ موجود "
+                        "بدونِ تکرار (مثلاً stride=۱۰۶ offset=۵۳)")
     e.add_argument("--spread", type=int, metavar="کلِ‌نمونه",
                    help="گام را طوری حساب کن که نمونهٔ نهایی (مجموعِ همهٔ "
                         "تکه‌ها) کلِ پیکره را بپوشاند")

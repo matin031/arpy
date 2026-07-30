@@ -21,7 +21,7 @@ def split_of(v1, v2):
     return "test" if (h[0] | (h[1] << 8)) % TEST_FRACTION == 0 else "train"
 
 
-def rows(path, split=None, limit=None, skip=0, stride=1):
+def rows(path, split=None, limit=None, skip=0, stride=1, offset=0):
     """پیمایشِ پیکره → (مصراع۱، مصراع۲، ارکان).
        split=None یعنی همه؛ 'train' / 'test' برای تفکیک.
        skip: از n بیتِ نخستِ *همین تفکیک* بگذر — برای استخراجِ تکه‌تکه، چون
@@ -33,12 +33,19 @@ def rows(path, split=None, limit=None, skip=0, stride=1):
        آزمون، و ۵ وزنِ نخست ۷۲.۸٪ از آموزش را می‌گیرند ولی ۴۹.۲٪ از آزمون را.
        رتبه‌بند روی همان بُرش هرچه بیشتر آموخت اعتبارسنجی بالاتر رفت
        (۸۱.۶٪ → ۸۵.۱٪) و دقتِ کنارگذاشته تکان نخورد (۸۰.۰٪ → ۷۹.۰٪).
-       با گامِ بزرگ، نمونه از سرتاسرِ پیکره برداشته می‌شود."""
+       با گامِ بزرگ، نمونه از سرتاسرِ پیکره برداشته می‌شود.
+
+       offset: نقطهٔ شروعِ گام. برای *بزرگ‌کردنِ* یک نمونهٔ موجود بدونِ دورریختنش:
+       نمونهٔ گامِ ۱۰۶ زیرمجموعهٔ گامِ ۵۳ است، پس اگر همان نمونه را با گامِ ۵۳
+       دوباره برداریم نیمی از بیت‌ها دوبار می‌آیند. با (stride=106, offset=53)
+       دقیقاً همان‌هایی می‌آیند که نمونهٔ اول جا انداخته بود، و کنارِ هم
+       نمونهٔ گامِ ۵۳ را بی‌تکرار می‌سازند."""
     csv.field_size_limit(1 << 24)
     n = 0
     seen = 0
     matched = 0
     stride = max(1, int(stride))
+    offset = int(offset) % stride
     with open(path, encoding="utf-8") as f:
         for row in csv.DictReader(f):
             v1 = (row.get("VERSE1") or "").strip()
@@ -49,7 +56,7 @@ def rows(path, split=None, limit=None, skip=0, stride=1):
             if split and split_of(v1, v2) != split:
                 continue
             matched += 1
-            if (matched - 1) % stride:            # گامِ نمونه‌گیری
+            if (matched - 1) % stride != offset:  # گامِ نمونه‌گیری
                 continue
             seen += 1
             if seen <= skip:
