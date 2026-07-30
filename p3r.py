@@ -21,11 +21,14 @@ def split_of(v1, v2):
     return "test" if (h[0] | (h[1] << 8)) % TEST_FRACTION == 0 else "train"
 
 
-def rows(path, split=None, limit=None):
+def rows(path, split=None, limit=None, skip=0):
     """پیمایشِ پیکره → (مصراع۱، مصراع۲، ارکان).
-       split=None یعنی همه؛ 'train' / 'test' برای تفکیک."""
+       split=None یعنی همه؛ 'train' / 'test' برای تفکیک.
+       skip: از n بیتِ نخستِ *همین تفکیک* بگذر — برای استخراجِ تکه‌تکه، چون
+       کارهای طولانیِ پس‌زمینه در این محیط گاهی نیمه‌کاره کشته می‌شوند."""
     csv.field_size_limit(1 << 24)
     n = 0
+    seen = 0
     with open(path, encoding="utf-8") as f:
         for row in csv.DictReader(f):
             v1 = (row.get("VERSE1") or "").strip()
@@ -34,6 +37,9 @@ def rows(path, split=None, limit=None):
             if not v1 or not ark:
                 continue
             if split and split_of(v1, v2) != split:
+                continue
+            seen += 1
+            if seen <= skip:
                 continue
             yield v1, v2, ark
             n += 1

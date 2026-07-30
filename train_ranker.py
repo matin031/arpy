@@ -54,8 +54,10 @@ def _one(item):
 def extract(args):
     import arooz
     print(f">> ویژگی‌ها: {list(arooz.FEATURES)}")
-    print(f">> {args.n} بیتِ آموزشی، {args.workers} پردازه", flush=True)
-    sample = list(p3r.rows(args.csv, split="train", limit=args.n))
+    print(f">> {args.n} بیتِ آموزشی (پرش={args.skip})، "
+          f"{args.workers} پردازه", flush=True)
+    sample = list(p3r.rows(args.csv, split="train", limit=args.n,
+                           skip=args.skip))
     Xs, gis = [], []
     t0 = time.time()
     # ★ imap (نه imap_unordered): ترتیبِ خروجی باید قطعی باشد، وگرنه تفکیکِ
@@ -143,15 +145,38 @@ def fit(args):
         print(f"   {f_:<9} {v:+.4f}")
 
 
+# ─────────────────────────── ادغامِ تکه‌ها ───────────────────────────
+def merge(args):
+    """چند فایلِ ویژگی را به یکی بچسبان — تکمیلِ extract --skip."""
+    Xs, ys, feats = [], [], None
+    for p in args.files:
+        d = np.load(p, allow_pickle=True)
+        f = [str(s) for s in d["feats"]]
+        if feats is None:
+            feats = f
+        elif f != feats:
+            sys.exit(f"ویژگی‌های {p} با بقیه یکی نیست — ادغام بی‌معنا است")
+        Xs.append(d["X"]); ys.append(d["y"])
+        print(f"   {p}: {d['X'].shape[0]} بیت")
+    X = np.concatenate(Xs); y = np.concatenate(ys)
+    np.savez_compressed(args.out, X=X, y=y, feats=np.array(feats))
+    print(f"\n✅ {args.out}:  {X.shape[0]} بیت × {X.shape[1]} نامزد × "
+          f"{X.shape[2]} ویژگی")
+
+
 if __name__ == "__main__":
     ap = argparse.ArgumentParser()
     sub = ap.add_subparsers(dest="cmd", required=True)
     e = sub.add_parser("extract"); e.add_argument("csv")
     e.add_argument("--n", type=int, default=3000)
+    e.add_argument("--skip", type=int, default=0,
+                   help="از n بیتِ نخستِ تفکیکِ آموزش بگذر (استخراجِ تکه‌تکه)")
     e.add_argument("--out", default="/tmp/feats.npz")
     e.add_argument("--workers", type=int, default=max(1, mp.cpu_count() - 1))
     f_ = sub.add_parser("fit"); f_.add_argument("file")
     f_.add_argument("--out", default=os.path.join(
         os.path.dirname(os.path.abspath(__file__)), "ranker.json"))
+    m = sub.add_parser("merge"); m.add_argument("files", nargs="+")
+    m.add_argument("--out", default="/tmp/feats_merged.npz")
     a = ap.parse_args()
-    (extract if a.cmd == "extract" else fit)(a)
+    {"extract": extract, "fit": fit, "merge": merge}[a.cmd](a)
