@@ -18,10 +18,15 @@ import p3r
 _NO_LEX = False
 
 
-def _init(no_lex, lex_path=None, beam=None):
+def _init(no_lex, lex_path=None, beam=None, ranker=None):
     import arooz
     if beam:
         arooz.BEAM = beam
+    # ★ رتبه‌بندِ جایگزین بدونِ دست‌زدن به ranker.json — مقایسهٔ نامزدها نباید
+    #   فایلِ کارکنان را جابه‌جا کند (هم مخزن کثیف می‌شود، هم اگر دو سنجش
+    #   هم‌زمان اجرا شوند نتیجه‌ها قاطی می‌شوند).
+    if ranker:
+        arooz.load_ranker(ranker)
     if no_lex:
         arooz.LEXICON = {}
     elif lex_path:
@@ -49,6 +54,8 @@ def main():
     ap.add_argument("--workers", type=int, default=max(1, mp.cpu_count() - 1))
     ap.add_argument("--seed", type=int, default=1)
     ap.add_argument("--beam", type=int, default=None)
+    ap.add_argument("--ranker", default=None,
+                    help="رتبه‌بندِ جایگزین (پیش‌فرض: ranker.json کنارِ موتور)")
     args = ap.parse_args()
 
     print(f">> خواندنِ مجموعهٔ آزمون…", flush=True)
@@ -71,7 +78,8 @@ def main():
     done = 0
 
     with mp.Pool(args.workers, initializer=_init,
-                 initargs=(args.no_lex, args.lex, args.beam)) as pool:
+                 initargs=(args.no_lex, args.lex, args.beam,
+                           args.ranker)) as pool:
         for gold, got, conf, rank in pool.imap_unordered(_one, sample, chunksize=1):
             done += 1
             hit = (got == gold)
